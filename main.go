@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 
@@ -32,7 +33,11 @@ func main() {
 		panic(err)
 	}
 
-	decoder := json.NewDecoder(resp.Body)
+	printRespStream(resp.Body)
+}
+
+func printRespStream(stream io.Reader) error {
+	decoder := json.NewDecoder(stream)
 	for {
 		var buildResp struct {
 			Stream string `json:"stream"`
@@ -43,15 +48,17 @@ func main() {
 			if err == io.EOF {
 				break
 			}
-			panic(err)
+			return err
 		}
 
 		if buildResp.Error != "" {
-			panic(buildResp.Error)
+			return errors.New(buildResp.Error)
 		}
 
 		if buildResp.Stream != "" {
 			fmt.Print(buildResp.Stream) // stream already includes newlines
 		}
 	}
+
+	return nil
 }
