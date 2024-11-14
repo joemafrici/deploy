@@ -20,7 +20,13 @@ func main() {
 	defer apiClient.Close()
 
 	resp, err := buildImage(apiClient, "../../imgserv")
-	printRespStream(resp.Body)
+	if err != nil {
+		panic(err)
+	}
+	err = printRespStream(resp.Body)
+	if err != nil {
+		panic(err)
+	}
 }
 
 func buildImage(client *client.Client, path string) (types.ImageBuildResponse, error) {
