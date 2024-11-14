@@ -19,21 +19,25 @@ func main() {
 	}
 	defer apiClient.Close()
 
-	tarBytes, err := archive.Tar("../../imgserv", archive.Uncompressed)
+	resp, err := buildImage(apiClient, "../../imgserv")
+	printRespStream(resp.Body)
+}
+
+func buildImage(client *client.Client, path string) (types.ImageBuildResponse, error) {
+	tarBytes, err := archive.Tar(path, archive.Uncompressed)
 	if err != nil {
-		panic(err)
+		return types.ImageBuildResponse{}, err
 	}
 
 	var pathToDockerfile = "Dockerfile"
 	buildOptions := types.ImageBuildOptions{
 		Dockerfile: pathToDockerfile,
 	}
-	resp, err := apiClient.ImageBuild(context.TODO(), tarBytes, buildOptions)
+	resp, err := client.ImageBuild(context.TODO(), tarBytes, buildOptions)
 	if err != nil {
-		panic(err)
+		return types.ImageBuildResponse{}, err
 	}
-
-	printRespStream(resp.Body)
+	return resp, nil
 }
 
 func printRespStream(stream io.Reader) error {
