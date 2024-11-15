@@ -77,7 +77,7 @@ func main() {
 	}
 	defer dockerClient.Close()
 
-	err = listAllContainers(dockerClient)
+	listAllContainers(dockerClient)
 
 	// TODO: some of this stuff is going to be done with a local docker client
 	// TODO: and some of it will be done with the remote docker client
@@ -105,16 +105,16 @@ func main() {
 
 }
 
-func listAllContainers(client *dockerclient.Client) error {
+func listAllContainers(client *dockerclient.Client) {
 	containers, err := client.ContainerList(context.TODO(), container.ListOptions{})
 	if err != nil {
-		return err
+		fmt.Printf("%v\n", err)
+		return
 	}
 
 	for idx, ctr := range containers {
 		fmt.Printf("Container %v: %s %s\n", idx, ctr.ID, ctr.Image)
 	}
-	return nil
 }
 
 func newDockerClient(sshClient *ssh.Client) (*dockerclient.Client, error) {
