@@ -53,90 +53,31 @@ func (c *proxyConn) SetReadDeadline(t time.Time) error  { return nil }
 func (c *proxyConn) SetWriteDeadline(t time.Time) error { return nil }
 
 func main() {
-	keyPath := os.ExpandEnv("$HOME/.ssh/id_ed25519")
-	keyBytes, err := os.ReadFile(keyPath)
+	sshClient, err := newSSHClient()
 	if err != nil {
 		panic(err)
 	}
+	defer sshClient.Close()
 
-	key, err := ssh.ParsePrivateKey(keyBytes)
+	sshSession, err := sshClient.NewSession()
 	if err != nil {
 		panic(err)
 	}
+	defer sshSession.Close()
 
-	username := "deepwater"
-	sshClientConfig := &ssh.ClientConfig{
-		User: username,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(key),
-		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         5 * time.Second,
-	}
-	host := "ssh.gojoe.dev"
-
-	cmd := exec.Command("cloudflared", "access", "ssh", "--hostname", host)
-
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		panic(err)
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		panic(err)
-	}
-
-	if err := cmd.Start(); err != nil {
-		panic(err)
-	}
-
-	conn := &proxyConn{
-		cmd:    cmd,
-		stdin:  stdin,
-		stdout: stdout,
-	}
-
-	sshConn, chans, reqs, err := ssh.NewClientConn(conn, host, sshClientConfig)
-	if err != nil {
-		panic(err)
-	}
-
-	client := ssh.NewClient(sshConn, chans, reqs)
-	fmt.Printf("connected to %s\n", host)
-	defer client.Close()
-
-	session, err := client.NewSession()
-	if err != nil {
-		panic(err)
-	}
-	defer session.Close()
-
-	output, err := session.Output("docker ps") // This will run 'docker ps' on the remote machine
+	output, err := sshSession.Output("docker ps")
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println(string(output))
 
-	dockerClient, err := dockerclient.NewClientWithOpts(
-		dockerclient.WithDialContext(func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return client.Dial("unix", "/var/run/docker.sock")
-		}),
-		dockerclient.WithHost("unix:///var/run/docker.sock"),
-		dockerclient.WithAPIVersionNegotiation(),
-	)
+	dockerClient, err := newDockerClient(sshClient)
 	if err != nil {
 		panic(err)
 	}
 	defer dockerClient.Close()
 
-	containers, err := dockerClient.ContainerList(context.TODO(), container.ListOptions{})
-	if err != nil {
-		panic(err)
-	}
-
-	for idx, ctr := range containers {
-		fmt.Printf("Container %v: %s %s\n", idx, ctr.ID, ctr.Image)
-	}
+	err = listAllContainers(dockerClient)
 
 	// TODO: some of this stuff is going to be done with a local docker client
 	// TODO: and some of it will be done with the remote docker client
@@ -162,6 +103,79 @@ func main() {
 	//}
 	//fmt.Printf("Container %s started\n", containerID)
 
+}
+
+func listAllContainers(client *dockerclient.Client) error {
+	containers, err := client.ContainerList(context.TODO(), container.ListOptions{})
+	if err != nil {
+		return err
+	}
+
+	for idx, ctr := range containers {
+		fmt.Printf("Container %v: %s %s\n", idx, ctr.ID, ctr.Image)
+	}
+	return nil
+}
+
+func newDockerClient(sshClient *ssh.Client) (*dockerclient.Client, error) {
+	return dockerclient.NewClientWithOpts(
+		dockerclient.WithDialContext(func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return sshClient.Dial("unix", "/var/run/docker.sock")
+		}),
+		dockerclient.WithHost("unix:///var/run/docker.sock"),
+		dockerclient.WithAPIVersionNegotiation(),
+	)
+}
+func newSSHClient() (*ssh.Client, error) {
+	keyPath := os.ExpandEnv("$HOME/.ssh/id_ed25519")
+	keyBytes, err := os.ReadFile(keyPath)
+	if err != nil {
+		return nil, err
+	}
+
+	key, err := ssh.ParsePrivateKey(keyBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	username := "deepwater"
+	sshClientConfig := &ssh.ClientConfig{
+		User: username,
+		Auth: []ssh.AuthMethod{
+			ssh.PublicKeys(key),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         5 * time.Second,
+	}
+	host := "ssh.gojoe.dev"
+
+	cmd := exec.Command("cloudflared", "access", "ssh", "--hostname", host)
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+
+	conn := &proxyConn{
+		cmd:    cmd,
+		stdin:  stdin,
+		stdout: stdout,
+	}
+
+	sshConn, chans, reqs, err := ssh.NewClientConn(conn, host, sshClientConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	return ssh.NewClient(sshConn, chans, reqs), nil
 }
 
 func startContainer(client *dockerclient.Client, containerID string) error {
