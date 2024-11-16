@@ -56,17 +56,13 @@ func (c *proxyConn) SetReadDeadline(t time.Time) error  { return nil }
 func (c *proxyConn) SetWriteDeadline(t time.Time) error { return nil }
 
 func main() {
-	dockerhubToken, err := getDockerhubToken()
-	fmt.Println("dockerhubToken is")
-	fmt.Println(dockerhubToken)
-	if err != nil {
-		panic(err)
-	}
-	sshClient, err := newSSHClient()
+	dockerhubToken, sshClient, dockerClientLocal, dockerClientRemote, err := setup()
 	if err != nil {
 		panic(err)
 	}
 	defer sshClient.Close()
+	defer dockerClientLocal.Close()
+	defer dockerClientRemote.Close()
 
 	sshSession, err := sshClient.NewSession()
 	if err != nil {
@@ -80,20 +76,6 @@ func main() {
 	}
 	fmt.Println(string(output))
 
-	dockerClientLocal, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv)
-	if err != nil {
-		panic(err)
-	}
-
-	dockerClientRemote, err := newDockerClientRemote(sshClient)
-	if err != nil {
-		panic(err)
-	}
-	defer dockerClientRemote.Close()
-
-	// TODO: some of this stuff is going to be done with a local docker client
-	// TODO: and some of it will be done with the remote docker client
-	// TODO: EX: building image done on local client????
 	fmt.Println("Building image")
 	resp, err := buildImage(dockerClientLocal, "../../imgserv")
 	if err != nil {
@@ -130,29 +112,22 @@ func main() {
 	}
 	defer respImagePush.Close()
 
-	decoder := json.NewDecoder(respImagePush)
-	for {
-		var pushResponse struct {
-			Status   string `json:"status"`
-			Error    string `json:"error"`
-			Progress string `json:"progress,omitempty"`
-		}
+	if err := printResponseStream(respImagePush); err != nil {
+		panic(err)
+	}
 
-		if err := decoder.Decode(&pushResponse); err != nil {
-			if err == io.EOF {
-				break
-			}
-			panic(err)
-		}
+	fmt.Println("Pulling image on remote")
+	respImagePull, err := dockerClientRemote.ImagePull(context.TODO(), "gojoe2/deploy:latest",
+		image.PullOptions{
+			RegistryAuth: authStr,
+		})
+	if err != nil {
+		panic(err)
+	}
+	defer respImagePull.Close()
 
-		if pushResponse.Error != "" {
-			panic(pushResponse.Error)
-		}
-
-		fmt.Printf("%s\n", pushResponse.Status)
-		if pushResponse.Progress != "" {
-			fmt.Printf("%s\n", pushResponse.Progress)
-		}
+	if err := printResponseStream(respImagePull); err != nil {
+		panic(err)
 	}
 
 	//containerID, err := buildContainer(dockerClient, imageID, "test-container-name")
@@ -167,6 +142,59 @@ func main() {
 	//}
 	//fmt.Printf("Container %s started\n", containerID)
 
+}
+
+func printResponseStream(stream io.ReadCloser) error {
+	decoder := json.NewDecoder(stream)
+	for {
+		var pushResponse struct {
+			Status   string `json:"status"`
+			Error    string `json:"error"`
+			Progress string `json:"progress,omitempty"`
+		}
+
+		if err := decoder.Decode(&pushResponse); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+
+		if pushResponse.Error != "" {
+			return errors.New(pushResponse.Error)
+		}
+
+		fmt.Printf("%s\n", pushResponse.Status)
+		if pushResponse.Progress != "" {
+			fmt.Printf("%s\n", pushResponse.Progress)
+		}
+	}
+	return nil
+}
+
+// caller is in charge of closing things
+func setup() (string, *ssh.Client, *dockerclient.Client, *dockerclient.Client, error) {
+	dockerhubToken, err := getDockerhubToken()
+	if err != nil {
+		return "", nil, nil, nil, err
+	}
+
+	sshClient, err := newSSHClient()
+	if err != nil {
+		return "", nil, nil, nil, err
+	}
+
+	dockerClientLocal, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv)
+	if err != nil {
+		return "", nil, nil, nil, err
+	}
+
+	dockerClientRemote, err := newDockerClientRemote(sshClient)
+	if err != nil {
+		return "", nil, nil, nil, err
+	}
+
+	return dockerhubToken, sshClient, dockerClientLocal, dockerClientRemote, nil
 }
 
 func getDockerhubToken() (string, error) {
@@ -194,7 +222,6 @@ func newDockerClientRemote(sshClient *ssh.Client) (*dockerclient.Client, error) 
 		dockerclient.WithDialContext(func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return sshClient.Dial("unix", "/var/run/docker.sock")
 		}),
-		dockerclient.WithHost("unix:///var/run/docker.sock"),
 		dockerclient.WithAPIVersionNegotiation(),
 	)
 }
