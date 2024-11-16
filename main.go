@@ -318,7 +318,12 @@ func buildContainer(client *dockerclient.Client, imageID string, containerName s
 		//},
 	}
 	containerName = ""
-	resp, err := client.ContainerCreate(context.TODO(), config, hostConfig, &network.NetworkingConfig{}, &ocispec.Platform{}, containerName)
+	networkConfig := network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			"deepwater_web": {},
+		},
+	}
+	resp, err := client.ContainerCreate(context.TODO(), config, hostConfig, &networkConfig, &ocispec.Platform{}, containerName)
 	if err != nil {
 		return "", err
 	}
