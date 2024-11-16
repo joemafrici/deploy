@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,7 +16,9 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/registry"
 	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/go-connections/nat"
@@ -53,6 +56,12 @@ func (c *proxyConn) SetReadDeadline(t time.Time) error  { return nil }
 func (c *proxyConn) SetWriteDeadline(t time.Time) error { return nil }
 
 func main() {
+	dockerhubToken, err := getDockerhubToken()
+	fmt.Println("dockerhubToken is")
+	fmt.Println(dockerhubToken)
+	if err != nil {
+		panic(err)
+	}
 	sshClient, err := newSSHClient()
 	if err != nil {
 		panic(err)
@@ -65,31 +74,86 @@ func main() {
 	}
 	defer sshSession.Close()
 
-	output, err := sshSession.Output("docker ps")
+	output, err := sshSession.Output("cd imgserv && git pull")
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println(string(output))
 
-	dockerClient, err := newDockerClient(sshClient)
+	dockerClientLocal, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv)
 	if err != nil {
 		panic(err)
 	}
-	defer dockerClient.Close()
 
-	listAllContainers(dockerClient)
+	dockerClientRemote, err := newDockerClientRemote(sshClient)
+	if err != nil {
+		panic(err)
+	}
+	defer dockerClientRemote.Close()
 
 	// TODO: some of this stuff is going to be done with a local docker client
 	// TODO: and some of it will be done with the remote docker client
 	// TODO: EX: building image done on local client????
-	//resp, err := buildImage(dockerClient, "../../imgserv")
-	//if err != nil {
-	//	panic(err)
-	//}
-	//imageID, err := processResponseStream(resp.Body)
-	//if err != nil {
-	//	panic(err)
-	//}
+	fmt.Println("Building image")
+	resp, err := buildImage(dockerClientLocal, "../../imgserv")
+	if err != nil {
+		panic(err)
+	}
+	imageID, err := processResponseStream(resp.Body)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("Tagging image as gojoe2/deploy:latest")
+	err = dockerClientLocal.ImageTag(context.TODO(), imageID, "gojoe2/deploy:latest")
+	if err != nil {
+		panic(err)
+	}
+
+	authConfig := registry.AuthConfig{
+		Username: "gojoe2",
+		Password: dockerhubToken,
+	}
+	encodedJSON, err := json.Marshal(authConfig)
+	if err != nil {
+		panic(err)
+	}
+	authStr := base64.URLEncoding.EncodeToString(encodedJSON)
+
+	fmt.Println("Pushing image")
+	respImagePush, err := dockerClientLocal.ImagePush(context.TODO(), "gojoe2/deploy:latest",
+		image.PushOptions{
+			RegistryAuth: authStr,
+		})
+	if err != nil {
+		panic(err)
+	}
+	defer respImagePush.Close()
+
+	decoder := json.NewDecoder(respImagePush)
+	for {
+		var pushResponse struct {
+			Status   string `json:"status"`
+			Error    string `json:"error"`
+			Progress string `json:"progress,omitempty"`
+		}
+
+		if err := decoder.Decode(&pushResponse); err != nil {
+			if err == io.EOF {
+				break
+			}
+			panic(err)
+		}
+
+		if pushResponse.Error != "" {
+			panic(pushResponse.Error)
+		}
+
+		fmt.Printf("%s\n", pushResponse.Status)
+		if pushResponse.Progress != "" {
+			fmt.Printf("%s\n", pushResponse.Progress)
+		}
+	}
 
 	//containerID, err := buildContainer(dockerClient, imageID, "test-container-name")
 	//if err != nil {
@@ -105,6 +169,14 @@ func main() {
 
 }
 
+func getDockerhubToken() (string, error) {
+	fileBytes, err := os.ReadFile(".dockerhub")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(fileBytes)), nil
+}
+
 func listAllContainers(client *dockerclient.Client) {
 	containers, err := client.ContainerList(context.TODO(), container.ListOptions{})
 	if err != nil {
@@ -117,7 +189,7 @@ func listAllContainers(client *dockerclient.Client) {
 	}
 }
 
-func newDockerClient(sshClient *ssh.Client) (*dockerclient.Client, error) {
+func newDockerClientRemote(sshClient *ssh.Client) (*dockerclient.Client, error) {
 	return dockerclient.NewClientWithOpts(
 		dockerclient.WithDialContext(func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return sshClient.Dial("unix", "/var/run/docker.sock")
