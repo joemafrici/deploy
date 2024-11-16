@@ -10,7 +10,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"path/filepath"
+	//"path/filepath"
 	"strings"
 	"time"
 
@@ -64,20 +64,20 @@ func main() {
 	defer dockerClientLocal.Close()
 	defer dockerClientRemote.Close()
 
-	sshSession, err := sshClient.NewSession()
-	if err != nil {
-		panic(err)
-	}
-	defer sshSession.Close()
+	//sshSession, err := sshClient.NewSession()
+	//if err != nil {
+	//	panic(err)
+	//}
+	//defer sshSession.Close()
 
-	output, err := sshSession.Output("cd imgserv && git pull")
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println(string(output))
+	//output, err := sshSession.Output("cd imgserv && git pull")
+	//if err != nil {
+	//	panic(err)
+	//}
+	//fmt.Println(string(output))
 
 	fmt.Println("Building image")
-	resp, err := buildImage(dockerClientLocal, "../../imgserv")
+	resp, err := buildImage(dockerClientLocal, "../hello_world")
 	if err != nil {
 		panic(err)
 	}
@@ -86,8 +86,8 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Println("Tagging image as gojoe2/deploy:latest")
-	err = dockerClientLocal.ImageTag(context.TODO(), imageID, "gojoe2/deploy:latest")
+	fmt.Println("Tagging image as gojoe2/hello_world:latest")
+	err = dockerClientLocal.ImageTag(context.TODO(), imageID, "gojoe2/hello_world:latest")
 	if err != nil {
 		panic(err)
 	}
@@ -103,7 +103,7 @@ func main() {
 	authStr := base64.URLEncoding.EncodeToString(encodedJSON)
 
 	fmt.Println("Pushing image")
-	respImagePush, err := dockerClientLocal.ImagePush(context.TODO(), "gojoe2/deploy:latest",
+	respImagePush, err := dockerClientLocal.ImagePush(context.TODO(), "gojoe2/hello_world:latest",
 		image.PushOptions{
 			RegistryAuth: authStr,
 		})
@@ -117,7 +117,7 @@ func main() {
 	}
 
 	fmt.Println("Pulling image on remote")
-	respImagePull, err := dockerClientRemote.ImagePull(context.TODO(), "gojoe2/deploy:latest",
+	respImagePull, err := dockerClientRemote.ImagePull(context.TODO(), "gojoe2/hello_world:latest",
 		image.PullOptions{
 			RegistryAuth: authStr,
 		})
@@ -130,18 +130,17 @@ func main() {
 		panic(err)
 	}
 
-	//containerID, err := buildContainer(dockerClient, imageID, "test-container-name")
-	//if err != nil {
-	//	panic(err)
-	//}
-	//fmt.Printf("Container ID is %s\n", containerID)
+	containerID, err := buildContainer(dockerClientRemote, imageID, "hello_world")
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("Container ID is %s\n", containerID)
 
-	//err = startContainer(dockerClient, containerID)
-	//if err != nil {
-	//	panic(err)
-	//}
-	//fmt.Printf("Container %s started\n", containerID)
-
+	err = startContainer(dockerClientRemote, containerID)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("Container %s started\n", containerID)
 }
 
 func printResponseStream(stream io.ReadCloser) error {
@@ -300,24 +299,25 @@ func buildContainer(client *dockerclient.Client, imageID string, containerName s
 		},
 	}
 
-	absPath, err := filepath.Abs("../../imgserv/assets")
-	if err != nil {
-		return "", err
-	}
+	//absPath, err := filepath.Abs("../../imgserv/assets")
+	//if err != nil {
+	//	return "", err
+	//}
 
 	hostConfig := &container.HostConfig{
 		PortBindings: nat.PortMap{
 			containerPort: []nat.PortBinding{
 				{
 					HostIP:   "0.0.0.0",
-					HostPort: "3003",
+					HostPort: "3004",
 				},
 			},
 		},
-		Binds: []string{
-			fmt.Sprintf("%s:/app/assets", absPath),
-		},
+		//Binds: []string{
+		//	fmt.Sprintf("%s:/app/assets", absPath),
+		//},
 	}
+	containerName = ""
 	resp, err := client.ContainerCreate(context.TODO(), config, hostConfig, &network.NetworkingConfig{}, &ocispec.Platform{}, containerName)
 	if err != nil {
 		return "", err
