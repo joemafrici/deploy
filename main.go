@@ -130,6 +130,19 @@ func main() {
 		panic(err)
 	}
 
+	fmt.Println("Attempting to stop container hello_world")
+	err = dockerClientRemote.ContainerStop(context.TODO(), "hello_world", container.StopOptions{})
+	if err != nil {
+		fmt.Printf("%v\n", err)
+	}
+
+	fmt.Println("Attempting to remove container hello_world")
+	err = dockerClientRemote.ContainerRemove(context.TODO(), "hello_world", container.RemoveOptions{})
+	if err != nil {
+		fmt.Printf("%v\n", err)
+	}
+
+	fmt.Println("Building container hello_world")
 	containerID, err := buildContainer(dockerClientRemote, imageID, "hello_world")
 	if err != nil {
 		panic(err)
@@ -285,8 +298,6 @@ func startContainer(client *dockerclient.Client, containerID string) error {
 }
 
 func buildContainer(client *dockerclient.Client, imageID string, containerName string) (string, error) {
-	fmt.Println("building container...")
-	fmt.Printf("imageID is %s\ncontainer name is %s\n", imageID, containerName)
 	containerPort, err := nat.NewPort("tcp", "80")
 	if err != nil {
 		return "", err
@@ -317,7 +328,6 @@ func buildContainer(client *dockerclient.Client, imageID string, containerName s
 		//	fmt.Sprintf("%s:/app/assets", absPath),
 		//},
 	}
-	containerName = ""
 	networkConfig := network.NetworkingConfig{
 		EndpointsConfig: map[string]*network.EndpointSettings{
 			"deepwater_web": {},
