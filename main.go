@@ -7,9 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
+	"strconv"
+
+	//"io/fs"
 	"net"
 	"os"
 	"os/exec"
+
 	//"path/filepath"
 	"strings"
 	"time"
@@ -130,20 +136,41 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Println("Attempting to stop container hello_world")
-	err = dockerClientRemote.ContainerStop(context.TODO(), "hello_world", container.StopOptions{})
-	if err != nil {
-		fmt.Printf("%v\n", err)
-	}
+	// read container name file
 
-	fmt.Println("Attempting to remove container hello_world")
-	err = dockerClientRemote.ContainerRemove(context.TODO(), "hello_world", container.RemoveOptions{})
+	fileBytes, err := os.ReadFile("config")
 	if err != nil {
-		fmt.Printf("%v\n", err)
+		panic(err)
 	}
+	// hello_world_1
+	oldServiceName := strings.TrimSpace(string(fileBytes))
+	slice := strings.Split(oldServiceName, "_")
+	if len(slice) != 3 {
+		panic(errors.New("Unable to parse config file"))
+	}
+	existingVersionNumber, err := strconv.Atoi(slice[2])
+	if err != nil {
+		panic(err)
+	}
+	newVersionNumber := existingVersionNumber + 1
+	fmt.Printf("new service version number is %d\n", newVersionNumber)
+	newServiceName := fmt.Sprintf("%s_%s_%d", slice[0], slice[1], newVersionNumber)
+	fmt.Printf("new service name is %s\n", newServiceName)
 
-	fmt.Println("Building container hello_world")
-	containerID, err := buildContainer(dockerClientRemote, imageID, "hello_world")
+	//fmt.Printf("Attempting to stop container %s\n", oldServiceName)
+	//err = dockerClientRemote.ContainerStop(context.TODO(), oldServiceName, container.StopOptions{})
+	//if err != nil {
+	//	fmt.Printf("%v\n", err)
+	//}
+
+	//fmt.Printf("Attempting to remove container %s\n", oldServiceName)
+	//err = dockerClientRemote.ContainerRemove(context.TODO(), oldServiceName, container.RemoveOptions{})
+	//if err != nil {
+	//	fmt.Printf("%v\n", err)
+	//}
+
+	fmt.Printf("Building container %s\n", newServiceName)
+	containerID, err := buildContainer(dockerClientRemote, imageID, newServiceName)
 	if err != nil {
 		panic(err)
 	}
@@ -154,6 +181,20 @@ func main() {
 		panic(err)
 	}
 	fmt.Printf("Container %s started\n", containerID)
+
+	body := url.Values{
+		"new": {newServiceName},
+	}
+	switchResp, err := http.PostForm("https://gojoe.dev/api/switch", body)
+	if err != nil {
+		panic(err)
+	}
+	defer switchResp.Body.Close()
+	var res map[string]interface{}
+	json.NewDecoder(switchResp.Body).Decode(&res)
+	fmt.Println("Got response:")
+	fmt.Println(res)
+
 }
 
 func printResponseStream(stream io.ReadCloser) error {
@@ -209,6 +250,10 @@ func setup() (string, *ssh.Client, *dockerclient.Client, *dockerclient.Client, e
 	return dockerhubToken, sshClient, dockerClientLocal, dockerClientRemote, nil
 }
 
+func writeContainerID(containerID string) error {
+	return os.WriteFile("containerid", []byte(containerID), 0644)
+
+}
 func getDockerhubToken() (string, error) {
 	fileBytes, err := os.ReadFile(".dockerhub")
 	if err != nil {
