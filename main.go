@@ -137,7 +137,6 @@ func main() {
 	}
 
 	// read container name file
-
 	fileBytes, err := os.ReadFile("config")
 	if err != nil {
 		panic(err)
@@ -157,6 +156,18 @@ func main() {
 	newServiceName := fmt.Sprintf("%s_%s_%d", slice[0], slice[1], newVersionNumber)
 	fmt.Printf("new service name is %s\n", newServiceName)
 
+	portFileBytes, err := os.ReadFile("port")
+	if err != nil {
+		panic(err)
+	}
+	existingPortNumber, err := strconv.Atoi(strings.TrimSpace(string(portFileBytes)))
+	if err != nil {
+		panic(err)
+	}
+
+	newPortNumber := existingPortNumber + 1
+	fmt.Printf("new port number is %v\n", newPortNumber)
+
 	//fmt.Printf("Attempting to stop container %s\n", oldServiceName)
 	//err = dockerClientRemote.ContainerStop(context.TODO(), oldServiceName, container.StopOptions{})
 	//if err != nil {
@@ -169,8 +180,17 @@ func main() {
 	//	fmt.Printf("%v\n", err)
 	//}
 
+	// in case a container already exists with the new service name
+	// this could happen if deploy built a container but then errored out
+	// before deploying it
+	fmt.Printf("Attempting to remove container %s\n", newServiceName)
+	err = dockerClientRemote.ContainerRemove(context.TODO(), newServiceName, container.RemoveOptions{})
+	if err != nil {
+		fmt.Printf("%v\n", err)
+	}
+
 	fmt.Printf("Building container %s\n", newServiceName)
-	containerID, err := buildContainer(dockerClientRemote, imageID, newServiceName)
+	containerID, err := buildContainer(dockerClientRemote, imageID, newServiceName, newPortNumber)
 	if err != nil {
 		panic(err)
 	}
@@ -183,8 +203,11 @@ func main() {
 	fmt.Printf("Container %s started\n", containerID)
 
 	body := url.Values{
-		"new": {newServiceName},
+		"new": []string{
+			newServiceName,
+		},
 	}
+	fmt.Printf("request body is: %v\n", body)
 	switchResp, err := http.PostForm("https://gojoe.dev/api/switch", body)
 	if err != nil {
 		panic(err)
@@ -195,6 +218,16 @@ func main() {
 	fmt.Println("Got response:")
 	fmt.Println(res)
 
+	fmt.Printf("Writing new service name {%s} to config\n", newServiceName)
+	err = os.WriteFile("config", []byte(newServiceName), 0644)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("Writing new port number {%v} to config\n", newPortNumber)
+	err = os.WriteFile("port", []byte(fmt.Sprintf("%d", newPortNumber)), 0644)
+	if err != nil {
+		panic(err)
+	}
 }
 
 func printResponseStream(stream io.ReadCloser) error {
@@ -250,10 +283,6 @@ func setup() (string, *ssh.Client, *dockerclient.Client, *dockerclient.Client, e
 	return dockerhubToken, sshClient, dockerClientLocal, dockerClientRemote, nil
 }
 
-func writeContainerID(containerID string) error {
-	return os.WriteFile("containerid", []byte(containerID), 0644)
-
-}
 func getDockerhubToken() (string, error) {
 	fileBytes, err := os.ReadFile(".dockerhub")
 	if err != nil {
@@ -342,7 +371,7 @@ func startContainer(client *dockerclient.Client, containerID string) error {
 	return nil
 }
 
-func buildContainer(client *dockerclient.Client, imageID string, containerName string) (string, error) {
+func buildContainer(client *dockerclient.Client, imageID string, containerName string, portNumber int) (string, error) {
 	containerPort, err := nat.NewPort("tcp", "80")
 	if err != nil {
 		return "", err
@@ -365,7 +394,7 @@ func buildContainer(client *dockerclient.Client, imageID string, containerName s
 			containerPort: []nat.PortBinding{
 				{
 					HostIP:   "0.0.0.0",
-					HostPort: "3004",
+					HostPort: fmt.Sprintf("%d", portNumber),
 				},
 			},
 		},
