@@ -1,3 +1,4 @@
 .dockerhub
 deploy
 target/
+*.tar.gz
