@@ -4,6 +4,8 @@ use std::fs::File;
 use std::path::PathBuf;
 use tar::Builder;
 
+use cloudflare_ssh::CloudflareSsh;
+
 /// Deploy an app
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -39,6 +41,18 @@ fn main() {
             &mut File::open(&project_dir).expect("Unable to open Cargo.tomlfile"),
         )
         .expect("Unable to add Cargo.lock to archive");
-    archive.finish().expect("Failed to create tarball");
+    let encoder = archive.into_inner().expect("Unable to get encoder back");
+    encoder.finish().expect("Unable to finish compression");
     println!("Tarball created");
+
+    let cloudflare_ssh_client =
+        CloudflareSsh::new().expect("Unable to create cloudflare ssh client");
+
+    let bytes_sent = cloudflare_ssh_client
+        .scp(
+            "/Users/deepwater/archive.tar.gz",
+            "/home/deepwater/archive.tar.gz",
+        )
+        .expect("Unable to scp tarball to remote");
+    println!("sent {} bytes", bytes_sent);
 }

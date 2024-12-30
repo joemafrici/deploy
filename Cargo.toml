@@ -6,4 +6,6 @@ edition = "2021"
 [dependencies]
 clap = { version = "4.5.23", features = ["derive"] }
 flate2 = "1.0.35"
+ssh2 = "0.9.4"
 tar = "0.4.43"
+cloudflare-ssh = { path = "/Users/deepwater/code/rust/cloudflare-ssh/" }
