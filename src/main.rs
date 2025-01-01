@@ -13,6 +13,14 @@ struct Args {
     /// directory of Rust app to deploy
     #[arg(short, long)]
     project_path: PathBuf,
+
+    /// Name of app to deploy
+    #[arg(short, long)]
+    app_name: String,
+
+    /// Username on remote
+    #[arg(short, long)]
+    remote_username: String,
 }
 fn main() {
     let args = Args::parse();
@@ -46,34 +54,49 @@ fn main() {
     println!("Tarball created");
 
     // println!("bootstrapping deployment configurations");
-    // bootstrap("axum-hello-world").expect("Should have been able to bootstrap deployment config");
+    // bootstrap(&args.app_name, &args.remote_username)
+    //     .expect("Should have been able to bootstrap deployment config");
 
     let cloudflare_ssh_client =
         CloudflareSsh::new().expect("Unable to create cloudflare ssh client");
 
-    println!("creating /opt/axum-hello-world dir");
+    println!("creating /opt/{} dir", args.app_name);
     let result = cloudflare_ssh_client
-        .exec("sudo mkdir -p /opt/axum-hello-world")
-        .expect("Should have been able to make /opt/axum-hello-world dir");
+        .exec(&format!("sudo mkdir -p /opt/{}", args.app_name))
+        .expect(&format!(
+            "Should have been able to make /opt/{} dir",
+            args.app_name
+        ));
     println!("{}", result);
-    println!("setting ownership of /opt/axum-hello-world to deepwater");
+    println!(
+        "setting ownership of /opt/{} to {}",
+        args.app_name, args.remote_username
+    );
     let result = cloudflare_ssh_client
-        .exec("sudo chown -R deepwater:deepwater /opt/axum-hello-world")
-        .expect("Should have been able to set ownership of /opt/axum-hello-world to deepwater");
+        .exec(&format!(
+            "sudo chown -R {}:{} /opt/{}",
+            args.remote_username, args.remote_username, args.app_name
+        ))
+        .expect(&format!(
+            "Should have been able to set ownership of /opt/{} to {}",
+            args.app_name, args.remote_username
+        ));
     println!("{}", result);
     let bytes_sent = cloudflare_ssh_client
         .scp(
             "/Users/deepwater/archive.tar.gz",
-            "/opt/axum-hello-world/archive.tar.gz",
+            &format!("/opt/{}/archive.tar.gz", args.app_name),
         )
         .expect("Unable to scp tarball to remote");
     println!("sent {} bytes", bytes_sent);
 
     println!("extracting tarball");
-    let result = cloudflare_ssh_client
-        .exec("tar -xvf /opt/axum-hello-world/archive.tar.gz -C /opt/axum-hello-world")
+    cloudflare_ssh_client
+        .exec(&format!(
+            "tar -xvf /opt/{}/archive.tar.gz -C /opt/{}",
+            args.app_name, args.app_name
+        ))
         .expect("Unable to extract tarball");
-    println!("{}", result);
 
     println!("checking cargo installation");
     cloudflare_ssh_client
@@ -82,6 +105,9 @@ fn main() {
 
     println!("running cargo build");
     cloudflare_ssh_client
-        .exec("source $HOME/.cargo/env && cd /opt/axum-hello-world && cargo build --release")
+        .exec(&format!(
+            "source $HOME/.cargo/env && cd /opt/{} && cargo build --release",
+            args.app_name
+        ))
         .expect("Unable to cargo build");
 }
