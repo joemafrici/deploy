@@ -6,6 +6,8 @@ use tar::Builder;
 
 use cloudflare_ssh::{bootstrap, CloudflareSsh};
 
+use std::io::Write;
+
 /// Deploy an app
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -53,9 +55,9 @@ fn main() {
     encoder.finish().expect("Unable to finish compression");
     println!("Tarball created");
 
-    // println!("bootstrapping deployment configurations");
-    // bootstrap(&args.app_name, &args.remote_username)
-    //     .expect("Should have been able to bootstrap deployment config");
+    println!("bootstrapping deployment configurations");
+    bootstrap(&args.app_name, &args.remote_username)
+        .expect("Should have been able to bootstrap deployment config");
 
     let cloudflare_ssh_client =
         CloudflareSsh::new().expect("Unable to create cloudflare ssh client");
@@ -110,4 +112,39 @@ fn main() {
             args.app_name
         ))
         .expect("Unable to cargo build");
+
+    println!("getting free port number from rproxy");
+    let params = [("app", &args.app_name)];
+    let url = reqwest::Url::parse_with_params("http://localhost:3002/api/port", &params)
+        .expect("Should have been able to parse request url with params");
+    let res = reqwest::blocking::get(url).expect("Should have been able to request port number");
+    let port = res
+        .text()
+        .expect("Should have been able to convert result to port number");
+    println!("got free port {}", port);
+
+    let service_file_contents = format!(
+        "[Unit]
+         Description=Hello world server
+         After=network.target
+
+         [Service]
+         ExecStart=/opt/axum-hello-world/target/release/axum-hello-world --port {port}
+         Type=notify
+         Restart=always
+
+         [Install]
+         WantedBy=default.target
+         RequiredBy=network.target"
+    );
+
+    println!("writing service file");
+    cloudflare_ssh_client
+        .exec(&format!(
+            "echo \"{}\" | sudo tee /etc/systemd/system/axum-hello-world.service",
+            service_file_contents
+        ))
+        .expect("Should have been able to write systemd service file");
+
+    println!("finished");
 }
