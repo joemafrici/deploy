@@ -130,7 +130,7 @@ fn main() {
 
          [Service]
          ExecStart=/opt/axum-hello-world/target/release/axum-hello-world --port {port}
-         Type=notify
+         Type=simple
          Restart=always
 
          [Install]
@@ -145,6 +145,21 @@ fn main() {
             service_file_contents
         ))
         .expect("Should have been able to write systemd service file");
+
+    println!("Issuing systemd reload command");
+    cloudflare_ssh_client
+        .exec("sudo systemctl daemon-reload")
+        .expect("Should have been able to reload systemd");
+
+    println!("Enabling {} service", args.app_name);
+    cloudflare_ssh_client
+        .exec(&format!("sudo systemctl enable {}.service", args.app_name))
+        .expect("Should have been able to enable service");
+
+    println!("Starting {} service", args.app_name);
+    cloudflare_ssh_client
+        .exec(&format!("sudo systemctl start {}.service", args.app_name))
+        .expect("Should have been able to enable service");
 
     println!("finished");
 }
