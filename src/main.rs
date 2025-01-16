@@ -27,6 +27,8 @@ struct Args {
 fn main() {
     let args = Args::parse();
     let mut project_dir = args.project_path;
+
+    // create tarball
     let file_ref =
         File::create("/Users/deepwater/archive.tar.gz").expect("Unable to create archive file");
     let encoder = GzEncoder::new(file_ref, Compression::default());
@@ -55,6 +57,7 @@ fn main() {
     encoder.finish().expect("Unable to finish compression");
     println!("Tarball created");
 
+    // bootstrap
     println!("bootstrapping deployment configurations");
     bootstrap(&args.app_name, &args.remote_username)
         .expect("Should have been able to bootstrap deployment config");
@@ -100,6 +103,7 @@ fn main() {
         ))
         .expect("Unable to extract tarball");
 
+    // build binary
     println!("checking cargo installation");
     cloudflare_ssh_client
         .exec("which cargo && cargo --version && pwd")
@@ -113,6 +117,7 @@ fn main() {
         ))
         .expect("Unable to cargo build");
 
+    // get new port number
     println!("getting free port number from rproxy");
     let params = [("app", &args.app_name)];
     let url = reqwest::Url::parse_with_params("http://localhost:3002/api/port", &params)
@@ -123,6 +128,7 @@ fn main() {
         .expect("Should have been able to convert result to port number");
     println!("got free port {}", port);
 
+    // setup systemd service
     let service_file_contents = format!(
         "[Unit]
          Description=Hello world server
@@ -158,8 +164,24 @@ fn main() {
 
     println!("Starting {} service", args.app_name);
     cloudflare_ssh_client
-        .exec(&format!("sudo systemctl start {}.service", args.app_name))
+        .exec(&format!("sudo systemctl {}.service", args.app_name))
         .expect("Should have been able to enable service");
+
+    // switch traffic
+    println!("Switching traffic to port: {}", port);
+    let params = [("app", &args.app_name), ("port", &port)];
+    let url = reqwest::Url::parse("http://localhost:3002/api/switch")
+        .expect("Should have been able to parse url");
+    let client = reqwest::blocking::Client::new();
+    let res = client
+        .post(url)
+        .form(&params)
+        .send()
+        .expect("Should have been able to POST to switch endpoint");
+    let res = res
+        .text()
+        .expect("Should have been able to convert result to port number");
+    println!("Got response: {}", res);
 
     println!("finished");
 }
