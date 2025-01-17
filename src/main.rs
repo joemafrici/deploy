@@ -26,11 +26,13 @@ struct Args {
 }
 fn main() {
     let args = Args::parse();
+
+    let app_name = format!("{}-green", args.app_name);
     let mut project_dir = args.project_path;
 
     // create tarball
     let file_ref =
-        File::create("/Users/deepwater/archive.tar.gz").expect("Unable to create archive file");
+        File::create("/home/deepwater/archive.tar.gz").expect("Unable to create archive file");
     let encoder = GzEncoder::new(file_ref, Compression::default());
     let mut archive = Builder::new(encoder);
     project_dir.push("src");
@@ -65,32 +67,56 @@ fn main() {
     let cloudflare_ssh_client =
         CloudflareSsh::new().expect("Unable to create cloudflare ssh client");
 
-    println!("creating /opt/{} dir", args.app_name);
+    println!("creating /opt/{}-green dir", args.app_name);
     let result = cloudflare_ssh_client
-        .exec(&format!("sudo mkdir -p /opt/{}", args.app_name))
+        .exec(&format!("sudo mkdir -p /opt/{}-green", args.app_name))
         .expect(&format!(
-            "Should have been able to make /opt/{} dir",
+            "Should have been able to make /opt/{}-green dir",
             args.app_name
         ));
     println!("{}", result);
+    println!("creating /opt/{}-blue dir", args.app_name);
+    let result = cloudflare_ssh_client
+        .exec(&format!("sudo mkdir -p /opt/{}-blue", args.app_name))
+        .expect(&format!(
+            "Should have been able to make /opt/{}-blue dir",
+            args.app_name
+        ));
+    println!("{}", result);
+
     println!(
-        "setting ownership of /opt/{} to {}",
+        "setting ownership of /opt/{}-green to {}",
         args.app_name, args.remote_username
     );
     let result = cloudflare_ssh_client
         .exec(&format!(
-            "sudo chown -R {}:{} /opt/{}",
+            "sudo chown -R {}:{} /opt/{}-green",
             args.remote_username, args.remote_username, args.app_name
         ))
         .expect(&format!(
-            "Should have been able to set ownership of /opt/{} to {}",
+            "Should have been able to set ownership of /opt/{}-green to {}",
             args.app_name, args.remote_username
         ));
     println!("{}", result);
+    println!(
+        "setting ownership of /opt/{}-blue to {}",
+        args.app_name, args.remote_username
+    );
+    let result = cloudflare_ssh_client
+        .exec(&format!(
+            "sudo chown -R {}:{} /opt/{}-blue",
+            args.remote_username, args.remote_username, args.app_name
+        ))
+        .expect(&format!(
+            "Should have been able to set ownership of /opt/{}-blue to {}",
+            args.app_name, args.remote_username
+        ));
+    println!("{}", result);
+
     let bytes_sent = cloudflare_ssh_client
         .scp(
             "/Users/deepwater/archive.tar.gz",
-            &format!("/opt/{}/archive.tar.gz", args.app_name),
+            &format!("/opt/{}/archive.tar.gz", app_name),
         )
         .expect("Unable to scp tarball to remote");
     println!("sent {} bytes", bytes_sent);
@@ -99,7 +125,7 @@ fn main() {
     cloudflare_ssh_client
         .exec(&format!(
             "tar -xvf /opt/{}/archive.tar.gz -C /opt/{}",
-            args.app_name, args.app_name
+            app_name, args.app_name
         ))
         .expect("Unable to extract tarball");
 
@@ -113,13 +139,13 @@ fn main() {
     cloudflare_ssh_client
         .exec(&format!(
             "source $HOME/.cargo/env && cd /opt/{} && cargo build --release",
-            args.app_name
+            app_name
         ))
         .expect("Unable to cargo build");
 
     // get new port number
     println!("getting free port number from rproxy");
-    let params = [("app", &args.app_name)];
+    let params = [("app", &app_name)];
     let url = reqwest::Url::parse_with_params("http://localhost:3002/api/port", &params)
         .expect("Should have been able to parse request url with params");
     let res = reqwest::blocking::get(url).expect("Should have been able to request port number");
@@ -131,24 +157,25 @@ fn main() {
     // setup systemd service
     let service_file_contents = format!(
         "[Unit]
-         Description=Hello world server
+         Description=Hello world service
          After=network.target
 
          [Service]
-         ExecStart=/opt/axum-hello-world/target/release/axum-hello-world --port {port}
+         ExecStart=/opt/{}/target/release/axum-hello-world --port {}
          Type=simple
          Restart=always
 
          [Install]
          WantedBy=default.target
-         RequiredBy=network.target"
+         RequiredBy=network.target",
+        &app_name, port
     );
 
     println!("writing service file");
     cloudflare_ssh_client
         .exec(&format!(
-            "echo \"{}\" | sudo tee /etc/systemd/system/axum-hello-world.service",
-            service_file_contents
+            "echo \"{}\" | sudo tee /etc/systemd/system/{}.service",
+            service_file_contents, &app_name
         ))
         .expect("Should have been able to write systemd service file");
 
@@ -157,19 +184,19 @@ fn main() {
         .exec("sudo systemctl daemon-reload")
         .expect("Should have been able to reload systemd");
 
-    println!("Enabling {} service", args.app_name);
+    println!("Enabling {} service", &app_name);
     cloudflare_ssh_client
-        .exec(&format!("sudo systemctl enable {}.service", args.app_name))
+        .exec(&format!("sudo systemctl enable {}.service", &app_name))
         .expect("Should have been able to enable service");
 
-    println!("Starting {} service", args.app_name);
+    println!("Starting {} service", &app_name);
     cloudflare_ssh_client
-        .exec(&format!("sudo systemctl {}.service", args.app_name))
+        .exec(&format!("sudo systemctl {}.service", &app_name))
         .expect("Should have been able to enable service");
 
     // switch traffic
     println!("Switching traffic to port: {}", port);
-    let params = [("app", &args.app_name), ("port", &port)];
+    let params = [("app", &app_name), ("port", &port)];
     let url = reqwest::Url::parse("http://localhost:3002/api/switch")
         .expect("Should have been able to parse url");
     let client = reqwest::blocking::Client::new();
